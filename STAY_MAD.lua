@@ -183,6 +183,14 @@ local function IsTeammateValid(teammatePawn)
     return true
 end
 
+local function GetEyePosition(pawn)
+    if pawn and pawn.m_pGameSceneNode then
+        local origin = pawn.m_pGameSceneNode.m_vecAbsOrigin
+        return Vector(origin.x, origin.y, origin.z + 64)
+    end
+    return nil
+end
+
 local function GetLocalPlayerPawn()
     local highestIndex = Entities.GetHighestEntityIndex() or 0
     for i = 1, highestIndex do
@@ -205,6 +213,7 @@ local function GetLocalPlayerPing()
     return 0
 end
 
+-- GANTI FUNGSI LAMA ANDA DENGAN VERSI YANG SUDAH DIPERBAIKI INI
 local function GriefTeammateGrenade(cmd)
     if not grenade_griefer_enable:GetBool() then return false end
 
@@ -212,18 +221,21 @@ local function GriefTeammateGrenade(cmd)
     if not localPlayerPawn or not localPlayerPawn.m_pGameSceneNode then return false end
 
     local localPlayerTeam = localPlayerPawn.m_iTeamNum
-    local eyePos = localPlayerPawn:GetEyePosition() -- Asumsi Anda punya fungsi GetEyePosition, jika tidak kita bisa buat
+    
+    -- [[!]] PERBAIKAN: Memanggil fungsi bantuan yang sudah kita buat [[!]]
+    local eyePos = GetEyePosition(localPlayerPawn)
+    if not eyePos then return false end -- Pastikan eyePos valid
+
     local highestIndex = Entities.GetHighestEntityIndex() or 0
     
     local targetGrenade = nil
-    local closestDist = math.huge
+    local closestDist = 9e9
 
     for i = 1, highestIndex do
         local entity = Entities.GetEntityFromIndex(i)
         if entity and entity.m_pGameSceneNode then
             
-            -- [[!]] PENTING: Nama Class "C_SmokeGrenadeProjectile" adalah TEBAKAN! [[!]]
-            -- Cari nama yang benar di dokumentasi Anda. Mungkin juga "C_BaseCSGrenadeProjectile".
+            -- Ganti "smokegrenade_projectile" dengan nama yang benar jika Anda menemukannya
             if Entities.GetDesignerName(entity) == "smokegrenade_projectile" then
                 local owner = entity.m_hOwnerEntity
                 if owner and owner.m_pGameSceneNode and owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
@@ -238,20 +250,14 @@ local function GriefTeammateGrenade(cmd)
     end
 
     if targetGrenade then
-        -- Kita punya target! Sekarang jalankan Aimbot.
         local targetPos = targetGrenade.m_pGameSceneNode.m_vecAbsOrigin
-        
-        -- Hitung sudut yang diperlukan untuk membidik target
         local aimAngles = CalculateAngles(eyePos, targetPos)
         
-        -- Terapkan sudut ke perintah gerak
         cmd.m_angViewAngles = aimAngles
         
-        -- Tambahkan perintah tembak
         local IN_ATTACK = 1
         cmd.m_nButtons = bit.bor(cmd.m_nButtons, IN_ATTACK)
         
-        -- Mengembalikan 'true' untuk menandakan fitur ini aktif dan telah menembak
         return true 
     end
 
