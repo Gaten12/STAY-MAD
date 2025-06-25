@@ -2,14 +2,35 @@ package.path = "C:\\plaguecheat.cc\\lib\\?.lua;" .. package.path
 local GUI = require("gui")
 local bit = require("bit")
 
+local ffi = require("ffi")
+ffi.cdef([[
+    typedef struct {
+        unsigned long type;
+        union {
+            struct {
+                long dx;
+                long dy;
+                unsigned long mouseData;
+                unsigned long dwFlags;
+                unsigned long time;
+                uintptr_t dwExtraInfo;
+            } mi;
+        };
+    } INPUT;
+    
+    unsigned int SendInput(unsigned int nInputs, INPUT* pInputs, int cbSize);
+    void Sleep(unsigned long dwMilliseconds);
+]])
+
+local INPUT_MOUSE = 0
+local MOUSEEVENTF_MOVE = 1
+local MOUSEEVENTF_LEFTDOWN = 2
+local MOUSEEVENTF_LEFTUP = 4
+
 GUI.Initialize() 
 Renderer.LoadFontFromFile("TahomaDebug23", "Tahoma", 12, true)
 
 local blockbot_enable = Menu.Checker("Blockbot Enable", false, false, true)
-local grenade_griefer_enable = Menu.Checker("Grief Granat Teman", true)
-local weapon_stealer_enable = Menu.Checker("Weapon Stealer", true) 
-local defuse_plant_blocker_enable = Menu.Checker("Defuse/Plant Blocker", true)
-local auto_molotov_grief_enable = Menu.Checker("Auto Molotov Grief", true) 
 local blocking_mode_combo = Menu.Combo("Blocking Mode", 0, {"View Angles", "Front Block", "Pusher Mode"})
 local autojump_enable = Menu.Checker("Auto Jump", false)
 
@@ -113,6 +134,21 @@ local esp_settings = {
     show_line = true
 }
 
+local grief_settings = {}
+
+-- FUNGSI BARU UNTUK MENGGAMBAR LINGKARAN FOV
+local function DrawGriefFOV()
+    if not grief_settings.show_fov or not grief_settings.show_fov:GetBool() then return end
+
+    local screenSize = Renderer.GetScreenSize()
+    if not screenSize then return end
+
+    local centerX, centerY = screenSize.x / 2, screenSize.y / 2
+    local fovRadius = grief_settings.fov:GetInt()
+
+    Renderer.DrawCircle(Vector2D(centerX, centerY), Color(255, 255, 255, 100), fovRadius)
+end
+
 local function fmod(a, b)
     return a - math.floor(a / b) * b
 end
@@ -171,6 +207,33 @@ local function IsOnScreen(screenPos)
     return screenPos.x >= 0 and screenPos.x <= screenSize.x and screenPos.y >= 0 and screenPos.y <= screenSize.y
 end
 
+-- Fungsi untuk mensimulasikan pergerakan mouse
+local function SendMouseMove(dx, dy)
+    local input = ffi.new("INPUT")
+    input.type = INPUT_MOUSE
+    input.mi.dx = math.floor(dx + 0.5)
+    input.mi.dy = math.floor(dy + 0.5)
+    input.mi.mouseData = 0
+    input.mi.dwFlags = MOUSEEVENTF_MOVE
+    input.mi.time = 0
+    input.mi.dwExtraInfo = 0
+    ffi.C.SendInput(1, input, ffi.sizeof("INPUT"))
+end
+
+-- Fungsi untuk mensimulasikan satu kali klik kiri
+local function SimulateLeftClick()
+    local input_down = ffi.new("INPUT")
+    input_down.type = INPUT_MOUSE
+    input_down.mi.dwFlags = MOUSEEVENTF_LEFTDOWN
+
+    local input_up = ffi.new("INPUT")
+    input_up.type = INPUT_MOUSE
+    input_up.mi.dwFlags = MOUSEEVENTF_LEFTUP
+
+    ffi.C.SendInput(1, input_down, ffi.sizeof("INPUT"))
+    ffi.C.SendInput(1, input_up, ffi.sizeof("INPUT"))
+end
+
 local function IsTeammateValid(teammatePawn)
     if not teammatePawn or not teammatePawn.m_pGameSceneNode then return false end
     
@@ -213,36 +276,46 @@ local function GetLocalPlayerPing()
     return 0
 end
 
--- GANTI FUNGSI LAMA ANDA DENGAN VERSI YANG SUDAH DIPERBAIKI INI
+-- GANTI SELURUH FUNGSI LAMA ANDA DENGAN VERSI BARU INI
 local function GriefTeammateGrenade(cmd)
-    if not grenade_griefer_enable:GetBool() then return false end
+    if not grief_settings.grenade_griefer or not grief_settings.grenade_griefer:GetBool() then return false end
 
     local localPlayerPawn = GetLocalPlayerPawn()
     if not localPlayerPawn or not localPlayerPawn.m_pGameSceneNode then return false end
 
-    local localPlayerTeam = localPlayerPawn.m_iTeamNum
-    
-    -- [[!]] PERBAIKAN: Memanggil fungsi bantuan yang sudah kita buat [[!]]
-    local eyePos = GetEyePosition(localPlayerPawn)
-    if not eyePos then return false end -- Pastikan eyePos valid
+    local screenSize = Renderer.GetScreenSize()
+    if not screenSize then return false end
 
+    local localPlayerTeam = localPlayerPawn.m_iTeamNum
     local highestIndex = Entities.GetHighestEntityIndex() or 0
     
     local targetGrenade = nil
-    local closestDist = 9e9
+    local closestDistToCenter = 9e9
+    local fovRadius = grief_settings.fov:GetInt()
 
     for i = 1, highestIndex do
         local entity = Entities.GetEntityFromIndex(i)
         if entity and entity.m_pGameSceneNode then
-            
-            -- Ganti "smokegrenade_projectile" dengan nama yang benar jika Anda menemukannya
             if Entities.GetDesignerName(entity) == "smokegrenade_projectile" then
-                local owner = entity.m_hOwnerEntity
-                if owner and owner.m_pGameSceneNode and owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
-                    local dist = eyePos:DistTo(entity.m_pGameSceneNode.m_vecAbsOrigin)
-                    if dist < closestDist then
-                        closestDist = dist
-                        targetGrenade = entity
+                local didSmoke = entity.m_bDidSmokeEffect
+                if didSmoke == false then
+                    local owner = entity.m_hThrower
+                    if owner and owner.m_pGameSceneNode and owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
+                        
+                        -- [[!]] LOGIKA BARU: PENGECEKAN FOV [[!]]
+                        local targetPos = entity.m_pGameSceneNode.m_vecAbsOrigin
+                        local screenPos = Renderer.WorldToScreen(targetPos)
+                        
+                        if screenPos then
+                            local centerX, centerY = screenSize.x / 2, screenSize.y / 2
+                            local distToCenter = math.sqrt((screenPos.x - centerX)^2 + (screenPos.y - centerY)^2)
+                            
+                            -- Periksa apakah granat berada di dalam lingkaran FOV
+                            if distToCenter < fovRadius and distToCenter < closestDistToCenter then
+                                closestDistToCenter = distToCenter
+                                targetGrenade = entity
+                            end
+                        end
                     end
                 end
             end
@@ -250,15 +323,18 @@ local function GriefTeammateGrenade(cmd)
     end
 
     if targetGrenade then
+        -- Logika Aimbot & Tembak (tetap sama)
         local targetPos = targetGrenade.m_pGameSceneNode.m_vecAbsOrigin
-        local aimAngles = CalculateAngles(eyePos, targetPos)
-        
-        cmd.m_angViewAngles = aimAngles
-        
-        local IN_ATTACK = 1
-        cmd.m_nButtons = bit.bor(cmd.m_nButtons, IN_ATTACK)
-        
-        return true 
+        local screenPos = Renderer.WorldToScreen(targetPos)
+        if screenPos then
+            local centerX, centerY = screenSize.x / 2, screenSize.y / 2
+            local deltaX, deltaY = screenPos.x - centerX, screenPos.y - centerY
+            
+            SendMouseMove(deltaX, deltaY)
+            ffi.C.Sleep(1)
+            SimulateLeftClick()
+            return true 
+        end
     end
 
     return false
@@ -342,8 +418,8 @@ local function SetupESPMenu()
     if gui_initialized then return end
 
     GUI.CreatePropperMenuLayout({
-        windowTitle = "STAY MAD", x = 200, y = 200, width = 600, height = 500,
-        categories = {"ESP Musuh", "ESP Teman", "Pengaturan ESP"}
+        windowTitle = "STAY MAD", x = 200, y = 200, width = 600, height = 550,
+        categories = {"ESP Musuh", "ESP Teman", "Pengaturan ESP", "Pengaturan Griefing"} 
     })
 
     local enemy_names, teammate_names = GetAllPlayersSortedByTeam()
@@ -408,6 +484,15 @@ local function SetupESPMenu()
     GUI.MenuCheckbox("Tampilkan Jarak", esp_settings.show_distance, function(c) esp_settings.show_distance = c end)
     GUI.MenuCheckbox("Tampilkan Health Bar", esp_settings.show_health_bar, function(c) esp_settings.show_health_bar = c end)
     GUI.MenuCheckbox("Tampilkan Garis (Snapline)", esp_settings.show_line, function(c) esp_settings.show_line = c end)
+
+    GUI.BeginCategory("Pengaturan Griefing")
+    grief_settings.grenade_griefer = GUI.MenuCheckbox("Grief Granat Teman", true)
+    grief_settings.weapon_stealer = GUI.MenuCheckbox("Weapon Stealer", true)
+    grief_settings.defuse_blocker = GUI.MenuCheckbox("Defuse/Plant Blocker", true)
+    grief_settings.molotov_grief = GUI.MenuCheckbox("Auto Molotov Grief", true)
+    GUI.MenuSeparator()
+    grief_settings.fov = GUI.MenuSlider("Griefing FOV", 50, 1, 300)
+    grief_settings.show_fov = GUI.MenuCheckbox("Tampilkan Lingkaran FOV", true)
 
     gui_initialized = true
 end
@@ -628,17 +713,11 @@ local function FindTeammateMolotovFire()
         
         -- Menggunakan pengecekan m_pGameSceneNode yang sudah aman
         if entity and entity.m_pGameSceneNode then
-            
-            -- [[!]] PERBAIKAN FINAL: Menggunakan fungsi yang benar dari API [[!]]
-            -- Kita ganti entity:GetClassName() dengan Entities.GetDesignerName(entity)
-            -- Kita cek dengan "inferno" (huruf kecil) karena itu biasanya format untuk Designer Name.
+
             if Entities.GetDesignerName(entity) == "inferno" then
-                
-                -- Ditemukan api, sekarang periksa pemiliknya
-                -- Kita asumsikan m_hOwnerEntity sudah benar dari analisis C_BaseEntity
+
                 local owner = entity.m_hOwnerEntity
-                
-                -- Gunakan pengecekan yang sama untuk memastikan 'owner' juga entitas yang valid
+
                 if owner and owner.m_pGameSceneNode then
                 
                     if owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
@@ -1090,6 +1169,7 @@ local function MasterRenderLoop()
     end
     DrawESPForTargets()
     DrawPlayerIndicators()
+    DrawGriefFOV() 
 end
 
 Cheat.RegisterCallback("OnRenderer", MasterRenderLoop)
