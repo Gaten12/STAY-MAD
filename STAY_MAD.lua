@@ -114,10 +114,10 @@ local ADAD_RHYTHM_WINDOW_SECONDS = 0.15
 local ADAD_MIN_RHYTHM_COUNT = 2
 
 -- Animated Circle Visuals
-local ANIMATED_CIRCLE_RADIUS = 30 -- Radius for the animated circle
-local ANIMATED_CIRCLE_SPEED = 2.0 -- How fast the circle moves up and down
-local ANIMATED_CIRCLE_HEIGHT_RANGE = 72 -- How much the circle moves up and down (e.g., player height)
-local ANIMATED_CIRCLE_BASE_Z_OFFSET = 0 -- Base Z offset (e.g., from feet)
+local ANIMATED_CIRCLE_RADIUS = 30 
+local ANIMATED_CIRCLE_SPEED = 2.0
+local ANIMATED_CIRCLE_HEIGHT_RANGE = 72 
+local ANIMATED_CIRCLE_BASE_Z_OFFSET = 0 
 
 local esp_color = Color(255, 100, 0, 255) 
 local gui_initialized = false
@@ -134,19 +134,40 @@ local esp_settings = {
     show_line = true
 }
 
-local grief_settings = {}
+local grief_settings = {
+    grenade_griefer = true,
+    weapon_stealer = true,
+    defuse_blocker = true,
+    molotov_grief = true,
+    fov = 50,
+    show_fov = true
+}
 
--- FUNGSI BARU UNTUK MENGGAMBAR LINGKARAN FOV
 local function DrawGriefFOV()
-    if not grief_settings.show_fov or not grief_settings.show_fov:GetBool() then return end
+    -- Mengambil nilai dari tabel settings yang sudah benar
+    if not grief_settings or not grief_settings.show_fov then return end
 
     local screenSize = Renderer.GetScreenSize()
     if not screenSize then return end
 
     local centerX, centerY = screenSize.x / 2, screenSize.y / 2
-    local fovRadius = grief_settings.fov:GetInt()
+    
+    -- Mengambil nilai FOV langsung dari tabel
+    local fovRadius = grief_settings.fov
+    local circleColor = Color(255, 255, 255, 80) -- Warna putih semi-transparan
 
-    Renderer.DrawCircle(Vector2D(centerX, centerY), Color(255, 255, 255, 100), fovRadius)
+    for i = 0, 360, 15 do
+        local angle1 = math.rad(i)
+        local angle2 = math.rad(i + 15)
+        
+        local x1 = centerX + (math.cos(angle1) * fovRadius)
+        local y1 = centerY + (math.sin(angle1) * fovRadius)
+        
+        local x2 = centerX + (math.cos(angle2) * fovRadius)
+        local y2 = centerY + (math.sin(angle2) * fovRadius)
+        
+        Renderer.DrawLine(Vector2D(x1, y1), Vector2D(x2, y2), circleColor, 1) 
+    end
 end
 
 local function fmod(a, b)
@@ -160,7 +181,7 @@ local function NormalizeYaw(yaw)
 end
 
 local function NormalizeVector(vec)
-    local magnitude = vec:Length() -- Asumsi API Vector punya method Length()
+    local magnitude = vec:Length()
     if magnitude > 1e-4 then
         return Vector(vec.x / magnitude, vec.y / magnitude, vec.z / magnitude)
     else
@@ -193,12 +214,12 @@ local function GetTeammateViewYaw(teammatePawn)
     if teammatePawn.m_angEyeAngles then
         return teammatePawn.m_angEyeAngles.y
     end
-    -- Fallback to velocity direction if eye angles are not available
+
     local velocity = teammatePawn.m_vecAbsVelocity or Vector(0,0,0)
-    if math.sqrt(velocity.x^2 + velocity.y^2) > 10 then -- Only if moving significantly
+    if math.sqrt(velocity.x^2 + velocity.y^2) > 10 then
         return math.atan2(velocity.y, velocity.x) * (180 / math.pi)
     end
-    return 0 -- Default yaw
+    return 0
 end
 
 local function IsOnScreen(screenPos)
@@ -276,9 +297,8 @@ local function GetLocalPlayerPing()
     return 0
 end
 
--- GANTI SELURUH FUNGSI LAMA ANDA DENGAN VERSI BARU INI
 local function GriefTeammateGrenade(cmd)
-    if not grief_settings.grenade_griefer or not grief_settings.grenade_griefer:GetBool() then return false end
+    if not grief_settings.grenade_griefer then return false end
 
     local localPlayerPawn = GetLocalPlayerPawn()
     if not localPlayerPawn or not localPlayerPawn.m_pGameSceneNode then return false end
@@ -291,7 +311,7 @@ local function GriefTeammateGrenade(cmd)
     
     local targetGrenade = nil
     local closestDistToCenter = 9e9
-    local fovRadius = grief_settings.fov:GetInt()
+    local fovRadius = grief_settings.fov
 
     for i = 1, highestIndex do
         local entity = Entities.GetEntityFromIndex(i)
@@ -301,8 +321,6 @@ local function GriefTeammateGrenade(cmd)
                 if didSmoke == false then
                     local owner = entity.m_hThrower
                     if owner and owner.m_pGameSceneNode and owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
-                        
-                        -- [[!]] LOGIKA BARU: PENGECEKAN FOV [[!]]
                         local targetPos = entity.m_pGameSceneNode.m_vecAbsOrigin
                         local screenPos = Renderer.WorldToScreen(targetPos)
                         
@@ -310,7 +328,6 @@ local function GriefTeammateGrenade(cmd)
                             local centerX, centerY = screenSize.x / 2, screenSize.y / 2
                             local distToCenter = math.sqrt((screenPos.x - centerX)^2 + (screenPos.y - centerY)^2)
                             
-                            -- Periksa apakah granat berada di dalam lingkaran FOV
                             if distToCenter < fovRadius and distToCenter < closestDistToCenter then
                                 closestDistToCenter = distToCenter
                                 targetGrenade = entity
@@ -323,7 +340,6 @@ local function GriefTeammateGrenade(cmd)
     end
 
     if targetGrenade then
-        -- Logika Aimbot & Tembak (tetap sama)
         local targetPos = targetGrenade.m_pGameSceneNode.m_vecAbsOrigin
         local screenPos = Renderer.WorldToScreen(targetPos)
         if screenPos then
@@ -410,7 +426,7 @@ local function UpdateListPageContent(player_names_list, gui_elements, page_state
     end
     
     if gui_elements.page_label then
-        gui_elements.page_label.text = string.format("Halaman %d / %d", page_state.current_page, page_state.total_pages)
+        gui_elements.page_label.text = string.format("Page %d / %d", page_state.current_page, page_state.total_pages)
     end
 end
 
@@ -419,12 +435,12 @@ local function SetupESPMenu()
 
     GUI.CreatePropperMenuLayout({
         windowTitle = "STAY MAD", x = 200, y = 200, width = 600, height = 550,
-        categories = {"ESP Musuh", "ESP Teman", "Pengaturan ESP", "Pengaturan Griefing"} 
+        categories = {"Enemy ESP", "Team ESP", "ESP Setting", "Griefing Setting"} 
     })
 
     local enemy_names, teammate_names = GetAllPlayersSortedByTeam()
 
-    GUI.BeginCategory("ESP Musuh")
+    GUI.BeginCategory("ESP Enemy")
     for i = 1, enemy_page_state.items_per_page do
         local slot_index = i
         local checkbox = GUI.MenuCheckbox("...", false, function(checked)
@@ -435,14 +451,14 @@ local function SetupESPMenu()
         end)
         table.insert(enemy_gui_elements.slots, checkbox)
     end
-    enemy_gui_elements.prev_button = GUI.MenuButton("< Sebelumnya", function()
+    enemy_gui_elements.prev_button = GUI.MenuButton("< Before", function()
         if enemy_page_state.current_page > 1 then
             enemy_page_state.current_page = enemy_page_state.current_page - 1
             UpdateListPageContent(GetAllPlayersSortedByTeam(), enemy_gui_elements, enemy_page_state)
         end
     end)
-    enemy_gui_elements.page_label = GUI.MenuLabel("Halaman 1 / 1")
-    enemy_gui_elements.next_button = GUI.MenuButton("Berikutnya >", function()
+    enemy_gui_elements.page_label = GUI.MenuLabel("Page 1 / 1")
+    enemy_gui_elements.next_button = GUI.MenuButton("Next >", function()
         local current_enemies, _ = GetAllPlayersSortedByTeam()
         if enemy_page_state.current_page < math.ceil(#current_enemies / enemy_page_state.items_per_page) then
             enemy_page_state.current_page = enemy_page_state.current_page + 1
@@ -451,7 +467,7 @@ local function SetupESPMenu()
     end)
     UpdateListPageContent(enemy_names, enemy_gui_elements, enemy_page_state)
 
-    GUI.BeginCategory("ESP Teman")
+    GUI.BeginCategory("ESP Team")
     for i = 1, teammate_page_state.items_per_page do
         local slot_index = i
         local checkbox = GUI.MenuCheckbox("...", false, function(checked)
@@ -462,14 +478,14 @@ local function SetupESPMenu()
         end)
         table.insert(teammate_gui_elements.slots, checkbox)
     end
-    teammate_gui_elements.prev_button = GUI.MenuButton("< Sebelumnya", function()
+    teammate_gui_elements.prev_button = GUI.MenuButton("< Before", function()
         if teammate_page_state.current_page > 1 then
             teammate_page_state.current_page = teammate_page_state.current_page - 1
             UpdateListPageContent(GetAllPlayersSortedByTeam(), teammate_gui_elements, teammate_page_state)
         end
     end)
-    teammate_gui_elements.page_label = GUI.MenuLabel("Halaman 1 / 1")
-    teammate_gui_elements.next_button = GUI.MenuButton("Berikutnya >", function()
+    teammate_gui_elements.page_label = GUI.MenuLabel("Page 1 / 1")
+    teammate_gui_elements.next_button = GUI.MenuButton("Next >", function()
         local _, current_teammates = GetAllPlayersSortedByTeam()
         if teammate_page_state.current_page < math.ceil(#current_teammates / teammate_page_state.items_per_page) then
             teammate_page_state.current_page = teammate_page_state.current_page + 1
@@ -478,27 +494,25 @@ local function SetupESPMenu()
     end)
     UpdateListPageContent(teammate_names, teammate_gui_elements, teammate_page_state)
     
-    GUI.BeginCategory("Pengaturan ESP")
-    GUI.MenuCheckbox("Tampilkan Box", esp_settings.show_box, function(val) esp_settings.show_box = val end)
-    GUI.MenuCheckbox("Tampilkan Nama", esp_settings.show_name, function(c) esp_settings.show_name = c end)
-    GUI.MenuCheckbox("Tampilkan Jarak", esp_settings.show_distance, function(c) esp_settings.show_distance = c end)
-    GUI.MenuCheckbox("Tampilkan Health Bar", esp_settings.show_health_bar, function(c) esp_settings.show_health_bar = c end)
-    GUI.MenuCheckbox("Tampilkan Garis (Snapline)", esp_settings.show_line, function(c) esp_settings.show_line = c end)
+    GUI.BeginCategory("ESP Setting")
+    GUI.MenuCheckbox("ESP Box", esp_settings.show_box, function(val) esp_settings.show_box = val end)
+    GUI.MenuCheckbox("ESP Name", esp_settings.show_name, function(c) esp_settings.show_name = c end)
+    GUI.MenuCheckbox("ESP Distance", esp_settings.show_distance, function(c) esp_settings.show_distance = c end)
+    GUI.MenuCheckbox("ESP Health Bar", esp_settings.show_health_bar, function(c) esp_settings.show_health_bar = c end)
+    GUI.MenuCheckbox("Snapline", esp_settings.show_line, function(c) esp_settings.show_line = c end)
+    GUI.BeginCategory("Griefing Setting")
+    GUI.MenuCheckbox("Granade Griefing", grief_settings.grenade_griefer, function(val) grief_settings.grenade_griefer = val end)
+    GUI.MenuCheckbox("Weapon Stealer", grief_settings.weapon_stealer, function(val) grief_settings.weapon_stealer = val end)
+    GUI.MenuCheckbox("Defuse/Plant Blocker", grief_settings.defuse_blocker, function(val) grief_settings.defuse_blocker = val end)
+    GUI.MenuCheckbox("Auto Molotov Grief", grief_settings.molotov_grief, function(val) grief_settings.molotov_grief = val end)
+    GUI.MenuLabel("")
+    GUI.MenuSlider("Granade Griefing FOV", 1, 300, grief_settings.fov, function(val) grief_settings.fov = val end)
+    GUI.MenuCheckbox("Draw FOV", grief_settings.show_fov, function(val) grief_settings.show_fov = val end)
 
-    GUI.BeginCategory("Pengaturan Griefing")
-    grief_settings.grenade_griefer = GUI.MenuCheckbox("Grief Granat Teman", true)
-    grief_settings.weapon_stealer = GUI.MenuCheckbox("Weapon Stealer", true)
-    grief_settings.defuse_blocker = GUI.MenuCheckbox("Defuse/Plant Blocker", true)
-    grief_settings.molotov_grief = GUI.MenuCheckbox("Auto Molotov Grief", true)
-    GUI.MenuSeparator()
-    grief_settings.fov = GUI.MenuSlider("Griefing FOV", 50, 1, 300)
-    grief_settings.show_fov = GUI.MenuCheckbox("Tampilkan Lingkaran FOV", true)
 
     gui_initialized = true
 end
 
-
--- GANTI SELURUH FUNGSI LAMA ANDA DENGAN YANG INI
 local function DrawESPForTargets()
     if next(player_esp_states) == nil then return end
 
@@ -684,20 +698,15 @@ local function FindDefusingOrPlantingTeammate()
     local highestIndex = Entities.GetHighestEntityIndex() or 0
 
     for i = 1, highestIndex do
-        local entity = Entities.GetEntityFromIndex(i)
-        -- Pastikan itu adalah pemain, bukan pemain lokal, dan satu tim dengan kita
         if entity and entity.m_bIsLocalPlayerController ~= nil and not entity.m_bIsLocalPlayerController and entity.m_hPawn then
             local potentialTarget = entity.m_hPawn
             if potentialTarget and potentialTarget.m_iTeamNum == localPlayerTeam then
                 if potentialTarget.m_bIsDefusing or potentialTarget.m_bIsPlanting then
-                    -- Jika kita menemukan target, langsung kembalikan entitasnya
                     return potentialTarget
                 end
             end
         end
     end
-
-    -- Jika loop selesai dan tidak ada yang ditemukan, kembalikan nil
     return nil
 end
 
@@ -710,8 +719,7 @@ local function FindTeammateMolotovFire()
 
     for i = 1, highestIndex do
         local entity = Entities.GetEntityFromIndex(i)
-        
-        -- Menggunakan pengecekan m_pGameSceneNode yang sudah aman
+
         if entity and entity.m_pGameSceneNode then
 
             if Entities.GetDesignerName(entity) == "inferno" then
@@ -721,7 +729,6 @@ local function FindTeammateMolotovFire()
                 if owner and owner.m_pGameSceneNode then
                 
                     if owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
-                        -- Ditemukan! Kembalikan posisi api.
                         return entity.m_pGameSceneNode.m_vecAbsOrigin
                     end
                 end
@@ -732,12 +739,11 @@ local function FindTeammateMolotovFire()
     return nil
 end
 
--- GANTI SELURUH FUNGSI 'FindWeaponToSteal' LAMA ANDA DENGAN VERSI BARU INI
 local function FindWeaponToSteal()
     local localPlayerPawn = GetLocalPlayerPawn()
     if not localPlayerPawn or not localPlayerPawn.m_pGameSceneNode then return nil end
 
-    -- Daftar senjata yang kita anggap berharga untuk dicuri
+    -- Daftar senjata
     local valuable_weapons = {
         ["weapon_awp"] = true,
         ["weapon_ak47"] = true,
@@ -755,13 +761,9 @@ local function FindWeaponToSteal()
         if weapon_entity and weapon_entity.m_pGameSceneNode and valuable_weapons[Entities.GetDesignerName(weapon_entity)] then
             
             local last_owner = weapon_entity.m_hOwnerEntity
-            
-            -- Langkah 3: Periksa apakah pemilik terakhir itu ada dan merupakan rekan satu tim kita.
+
             if last_owner and last_owner.m_pGameSceneNode and last_owner.m_iTeamNum == localPlayerTeam then
-            
-                -- KONDISI MENCURI TERPENUHI: Senjata ini milik teman!
-                -- Kita tidak perlu lagi memeriksa pemain lain. Kita langsung targetkan senjata ini.
-                
+
                 local weaponPos = weapon_entity.m_pGameSceneNode.m_vecAbsOrigin
                 
                 -- Pastikan senjata tidak terlalu jauh untuk efisiensi
