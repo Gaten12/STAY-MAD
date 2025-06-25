@@ -30,14 +30,7 @@ local MOUSEEVENTF_LEFTUP = 4
 GUI.Initialize() 
 Renderer.LoadFontFromFile("TahomaDebug23", "Tahoma", 12, true)
 
-local blockbot_enable = Menu.Checker("Blockbot Enable", false, false, true)
-local blocking_mode_combo = Menu.Combo("Blocking Mode", 0, {"View Angles", "Front Block", "Pusher Mode"})
-local autojump_enable = Menu.Checker("Auto Jump", false)
-
--- Custom color settings for visuals
-local circle_color = Menu.Checker("Circle Color", false, true)
-local on_head_color = Menu.Checker("On Head Color", false, true)
-local mode_indicator_color = Menu.Checker("Mode Indicator Color", false, true)
+local last_player_list_update = 0
 
 --// GLOBAL STATE VARIABLES //--
 local blockEnemy = nil
@@ -114,10 +107,10 @@ local ADAD_RHYTHM_WINDOW_SECONDS = 0.15
 local ADAD_MIN_RHYTHM_COUNT = 2
 
 -- Animated Circle Visuals
-local ANIMATED_CIRCLE_RADIUS = 30 
-local ANIMATED_CIRCLE_SPEED = 2.0
-local ANIMATED_CIRCLE_HEIGHT_RANGE = 72 
-local ANIMATED_CIRCLE_BASE_Z_OFFSET = 0 
+local ANIMATED_CIRCLE_RADIUS = 30 -- Radius for the animated circle
+local ANIMATED_CIRCLE_SPEED = 2.0 -- How fast the circle moves up and down
+local ANIMATED_CIRCLE_HEIGHT_RANGE = 72 -- How much the circle moves up and down (e.g., player height)
+local ANIMATED_CIRCLE_BASE_Z_OFFSET = 0 -- Base Z offset (e.g., from feet)
 
 local esp_color = Color(255, 100, 0, 255) 
 local gui_initialized = false
@@ -134,6 +127,19 @@ local esp_settings = {
     show_line = true
 }
 
+local blockbot_settings = {
+    enabled = true,
+    hotkey = 0x56, -- Tombol default 'V'
+    mode = 0,      -- 0: View Angles, 1: Front Block, 2: Pusher Mode
+    is_active = false -- Status apakah hotkey sedang ditahan
+}
+
+-- TAMBAHKAN INI DI ATAS
+local visual_settings = {
+    circle_color = Color(0, 255, 255, 255),
+    on_head_color = Color(255, 255, 0, 255)
+}
+
 local grief_settings = {
     grenade_griefer = true,
     weapon_stealer = true,
@@ -143,6 +149,7 @@ local grief_settings = {
     show_fov = true
 }
 
+-- GANTI SELURUH FUNGSI LAMA ANDA DENGAN VERSI BARU INI
 local function DrawGriefFOV()
     -- Mengambil nilai dari tabel settings yang sudah benar
     if not grief_settings or not grief_settings.show_fov then return end
@@ -435,12 +442,12 @@ local function SetupESPMenu()
 
     GUI.CreatePropperMenuLayout({
         windowTitle = "STAY MAD", x = 200, y = 200, width = 600, height = 550,
-        categories = {"Enemy ESP", "Team ESP", "ESP Setting", "Griefing Setting"} 
+        categories = {"Enemy ESP", "Team ESP", "ESP Setting", "Blockbot Setting", "Griefing Setting"} 
     })
 
     local enemy_names, teammate_names = GetAllPlayersSortedByTeam()
 
-    GUI.BeginCategory("ESP Enemy")
+    GUI.BeginCategory("Enemy ESP")
     for i = 1, enemy_page_state.items_per_page do
         local slot_index = i
         local checkbox = GUI.MenuCheckbox("...", false, function(checked)
@@ -467,7 +474,7 @@ local function SetupESPMenu()
     end)
     UpdateListPageContent(enemy_names, enemy_gui_elements, enemy_page_state)
 
-    GUI.BeginCategory("ESP Team")
+    GUI.BeginCategory("Team ESP")
     for i = 1, teammate_page_state.items_per_page do
         local slot_index = i
         local checkbox = GUI.MenuCheckbox("...", false, function(checked)
@@ -500,6 +507,26 @@ local function SetupESPMenu()
     GUI.MenuCheckbox("ESP Distance", esp_settings.show_distance, function(c) esp_settings.show_distance = c end)
     GUI.MenuCheckbox("ESP Health Bar", esp_settings.show_health_bar, function(c) esp_settings.show_health_bar = c end)
     GUI.MenuCheckbox("Snapline", esp_settings.show_line, function(c) esp_settings.show_line = c end)
+    
+    GUI.BeginCategory("Blockbot Setting")
+    GUI.MenuCheckbox("Enable Blockbot", blockbot_settings.enabled, function(val)
+        blockbot_settings.enabled = val
+    end)
+    GUI.MenuKeybind("Blockbot Hotkey", blockbot_settings.hotkey, "Hold", function(key, mode)
+        blockbot_settings.hotkey = key
+    end)
+    GUI.MenuCombobox("Blockbot Mode", {"View Angles", "Front Block", "Pusher Mode"}, blockbot_settings.mode, function(index, text)
+        blockbot_settings.mode = index
+    end)
+    GUI.MenuCheckbox("Auto Jump", autojump_enable, function(val) autojump_enable = val end)
+
+    GUI.MenuColorPicker("circle_color", visual_settings.circle_color, function(color)
+        visual_settings.circle_color = color
+    end)
+    GUI.MenuColorPicker("On Head Color", visual_settings.on_head_color, function(color)
+        visual_settings.on_head_color = color
+    end)
+
     GUI.BeginCategory("Griefing Setting")
     GUI.MenuCheckbox("Granade Griefing", grief_settings.grenade_griefer, function(val) grief_settings.grenade_griefer = val end)
     GUI.MenuCheckbox("Weapon Stealer", grief_settings.weapon_stealer, function(val) grief_settings.weapon_stealer = val end)
@@ -513,6 +540,8 @@ local function SetupESPMenu()
     gui_initialized = true
 end
 
+
+-- GANTI SELURUH FUNGSI LAMA ANDA DENGAN YANG INI
 local function DrawESPForTargets()
     if next(player_esp_states) == nil then return end
 
@@ -698,15 +727,20 @@ local function FindDefusingOrPlantingTeammate()
     local highestIndex = Entities.GetHighestEntityIndex() or 0
 
     for i = 1, highestIndex do
+        local entity = Entities.GetEntityFromIndex(i)
+        -- Pastikan itu adalah pemain, bukan pemain lokal, dan satu tim dengan kita
         if entity and entity.m_bIsLocalPlayerController ~= nil and not entity.m_bIsLocalPlayerController and entity.m_hPawn then
             local potentialTarget = entity.m_hPawn
             if potentialTarget and potentialTarget.m_iTeamNum == localPlayerTeam then
                 if potentialTarget.m_bIsDefusing or potentialTarget.m_bIsPlanting then
+                    -- Jika kita menemukan target, langsung kembalikan entitasnya
                     return potentialTarget
                 end
             end
         end
     end
+
+    -- Jika loop selesai dan tidak ada yang ditemukan, kembalikan nil
     return nil
 end
 
@@ -719,7 +753,8 @@ local function FindTeammateMolotovFire()
 
     for i = 1, highestIndex do
         local entity = Entities.GetEntityFromIndex(i)
-
+        
+        -- Menggunakan pengecekan m_pGameSceneNode yang sudah aman
         if entity and entity.m_pGameSceneNode then
 
             if Entities.GetDesignerName(entity) == "inferno" then
@@ -729,6 +764,7 @@ local function FindTeammateMolotovFire()
                 if owner and owner.m_pGameSceneNode then
                 
                     if owner.m_iTeamNum == localPlayerTeam and owner ~= localPlayerPawn then
+                        -- Ditemukan! Kembalikan posisi api.
                         return entity.m_pGameSceneNode.m_vecAbsOrigin
                     end
                 end
@@ -739,11 +775,12 @@ local function FindTeammateMolotovFire()
     return nil
 end
 
+-- GANTI SELURUH FUNGSI 'FindWeaponToSteal' LAMA ANDA DENGAN VERSI BARU INI
 local function FindWeaponToSteal()
     local localPlayerPawn = GetLocalPlayerPawn()
     if not localPlayerPawn or not localPlayerPawn.m_pGameSceneNode then return nil end
 
-    -- Daftar senjata
+    -- Daftar senjata yang kita anggap berharga untuk dicuri
     local valuable_weapons = {
         ["weapon_awp"] = true,
         ["weapon_ak47"] = true,
@@ -761,9 +798,11 @@ local function FindWeaponToSteal()
         if weapon_entity and weapon_entity.m_pGameSceneNode and valuable_weapons[Entities.GetDesignerName(weapon_entity)] then
             
             local last_owner = weapon_entity.m_hOwnerEntity
-
+            
+            -- Langkah 3: Periksa apakah pemilik terakhir itu ada dan merupakan rekan satu tim kita.
             if last_owner and last_owner.m_pGameSceneNode and last_owner.m_iTeamNum == localPlayerTeam then
-
+            
+                -- KONDISI MENCURI TERPENUHI: Senjata ini milik teman!           
                 local weaponPos = weapon_entity.m_pGameSceneNode.m_vecAbsOrigin
                 
                 -- Pastikan senjata tidak terlalu jauh untuk efisiensi
@@ -780,11 +819,15 @@ end
 local function BlockbotLogic(cmd)
     if not cmd then return end
 
-        if Globals.IsConnected() and GriefTeammateGrenade(cmd) then
-        return 
+    -- Prioritas #1: Grief Granat (jika diaktifkan)
+    if grief_settings.grenade_griefer and Globals.IsConnected() then
+        if GriefTeammateGrenade(cmd) then
+            return 
+        end
     end
 
-    if weapon_stealer_enable:GetBool() and Globals.IsConnected() then
+    -- Prioritas #2: Weapon Stealer (jika diaktifkan)
+    if grief_settings.weapon_stealer and Globals.IsConnected() then
         local weapon_position = FindWeaponToSteal()
         if weapon_position then
             local localPlayerForGrief = GetLocalPlayerPawn()
@@ -796,33 +839,34 @@ local function BlockbotLogic(cmd)
         end
     end
 
-    if auto_molotov_grief_enable:GetBool() and Globals.IsConnected() then
+    -- Prioritas #3: Auto Molotov Grief (jika diaktifkan)
+    if grief_settings.molotov_grief and Globals.IsConnected() then
         local fire_position = FindTeammateMolotovFire()
         if fire_position then
             local localPlayerForGrief = GetLocalPlayerPawn()
             if localPlayerForGrief then   
-                local dummy_target = {
-                    m_pGameSceneNode = {
-                        m_vecAbsOrigin = fire_position
-                    }
-                }
+                local dummy_target = { m_pGameSceneNode = { m_vecAbsOrigin = fire_position } }
                 CalculatePusherMove(cmd, localPlayerForGrief, dummy_target)
                 return
             end
         end
     end
 
-    if defuse_plant_blocker_enable:GetBool() and Globals.IsConnected() then
+    -- Prioritas #4: Defuse/Plant Blocker (jika diaktifkan)
+    if grief_settings.defuse_blocker and Globals.IsConnected() then
         local griefingTarget = FindDefusingOrPlantingTeammate()
         if griefingTarget then
             local localPlayerForGrief = GetLocalPlayerPawn()
             if localPlayerForGrief then
+                -- Menggunakan fungsi yang benar untuk memblokir di depan pandangan
                 CalculatePusherMove(cmd, localPlayerForGrief, griefingTarget)
                 return 
             end
         end
     end
 
+    if not blockbot_settings.enabled then return end
+    
     local localPlayerPawn = GetLocalPlayerPawn()
     local local_ping = GetLocalPlayerPing()
 
@@ -852,11 +896,9 @@ local function BlockbotLogic(cmd)
         return
     end
 
-    if not blockbot_enable:GetBool() or not blockbot_enable:IsDown() then
+    if not blockbot_settings.is_active then
         if bot_has_active_jump_command then CVar.ExecuteClientCmd("-jump"); bot_has_active_jump_command = false end
         blockEnemy = nil; currentTarget = nil
-        prev_lateral_offset_sign_for_adad = 0; adad_active_timer = 0
-        last_lateral_change_time = 0; adad_rhythm_streak = 0
         return
     end
 
@@ -869,21 +911,16 @@ local function BlockbotLogic(cmd)
     if not blockEnemy or not blockEnemy.m_pGameSceneNode or not IsTeammateValid(blockEnemy) then
         if bot_has_active_jump_command then CVar.ExecuteClientCmd("-jump"); bot_has_active_jump_command = false end
         blockEnemy = nil; currentTarget = nil;
-        prev_block_enemy_ref_for_accel = nil
-        prev_target_pos_for_accel = nil
-        prev_target_vel_for_accel = nil
-        prev_lateral_offset_sign_for_adad = 0
-        adad_active_timer = 0
-        last_lateral_change_time = 0; adad_rhythm_streak = 0
-        return
+        return  
     end
 
     local teammate_ping = blockEnemy.m_iPing or 0
     local teammate_ping_offset_seconds = teammate_ping / 1000.0
-    local localPos = localPlayerPawn.m_pGameSceneNode.m_vecAbsOrigin
+    local localPos = localPlayerPawn.m_pGameSceneNode.m_vecAbsOrigin    
     local teammatePos = blockEnemy.m_pGameSceneNode.m_vecAbsOrigin
     local teammateVel = blockEnemy.m_vecAbsVelocity or Vector(0,0,0)
     local teammateSpeedXY = math.sqrt(teammateVel.x^2 + teammateVel.y^2)
+    local is_on_ground_this_frame = bit.band(localPlayerPawn.m_fFlags, 1) ~= 0
     
     if prev_block_enemy_ref_for_accel ~= blockEnemy or not prev_target_pos_for_accel or not prev_target_vel_for_accel then
         prev_target_pos_for_accel = Vector(teammatePos.x, teammatePos.y, teammatePos.z)
@@ -907,7 +944,7 @@ local function BlockbotLogic(cmd)
     local isOnHead = (localPos.z - teammatePos.z) > ON_HEAD_Z_THRESHOLD and 
                      CheckSameXY(localPos, teammatePos, ON_HEAD_XY_TOLERANCE)
 
-    if autojump_enable:GetBool() and not isOnHead and 
+    if autojump_enable and not isOnHead and 
        math.abs(teammateVel.z) > AUTOJUMP_TARGET_Z_VEL_THRESHOLD and 
        is_on_ground_this_frame and not bot_has_active_jump_command then
         CVar.ExecuteClientCmd("+jump")
@@ -947,16 +984,16 @@ local function BlockbotLogic(cmd)
             local normalized_correction = NormalizeVector(correction_vector)
             correction_forward = (normalized_correction.x * cos_yaw + normalized_correction.y * sin_yaw) * correction_distance * correction_gain
             correction_side = (-normalized_correction.x * sin_yaw + normalized_correction.y * cos_yaw) * correction_distance * correction_gain
-        end
+        end 
 
         local finalForwardMove = vel_match_forward + correction_forward
         local finalSideMove = vel_match_side + correction_side
 
         cmd.m_flForwardMove = math.max(-1.0, math.min(1.0, finalForwardMove))
         cmd.m_flLeftMove = math.max(-1.0, math.min(1.0, finalSideMove))
-    else 
+    else    
         --// GROUND LOGIC //--
-        local selectedMode = blocking_mode_combo:GetInt()
+        local selectedMode = blockbot_settings.mode
 
         if selectedMode == 0 then -- View Angles Mode
             cmd.m_flLeftMove = 0.0
@@ -1088,7 +1125,7 @@ local function BlockbotLogic(cmd)
 end
 
 local function DrawPlayerIndicators()
-    if not blockbot_enable:GetBool() or not blockbot_enable:IsDown() then return end
+    if not blockbot_settings.is_active then return end
     if not blockEnemy or not blockEnemy.m_pGameSceneNode then return end
 
     local teammatePosRaw = blockEnemy.m_pGameSceneNode.m_vecAbsOrigin
@@ -1098,14 +1135,13 @@ local function DrawPlayerIndicators()
     if actualFrameTime <= 0 then actualFrameTime = 0.015625 end
     local predFrameTimeForVisuals = math.min(actualFrameTime, MAX_PREDICTION_FRAMETIME)
     
-    local visualPredictionFrames = 4 -- How many frames ahead to predict for the visual indicator
+    local visualPredictionFrames = 4
     local predictedTeammateVisualPos = Vector(
         teammatePosRaw.x + teammateVel.x * predFrameTimeForVisuals * visualPredictionFrames, 
         teammatePosRaw.y + teammateVel.y * predFrameTimeForVisuals * visualPredictionFrames, 
         teammatePosRaw.z + teammateVel.z * predFrameTimeForVisuals * visualPredictionFrames
     )
 
-    -- Interpolate visual position for smoothness
     local interpolatedPos
     if lastDrawnTeammatePos then
         interpolatedPos = Vector(
@@ -1116,16 +1152,13 @@ local function DrawPlayerIndicators()
     else
         interpolatedPos = predictedTeammateVisualPos
     end
-    lastDrawnTeammatePos = interpolatedPos -- Store for next frame's interpolation
+    lastDrawnTeammatePos = interpolatedPos
 
-    -- Get screen positions for drawing
     local screenPosTargetFeet = Renderer.WorldToScreen(interpolatedPos)
-
     if not IsOnScreen(screenPosTargetFeet) then return end
 
-    -- Define colors based on menu settings or defaults
-    local baseCircleColor = circle_color:GetBool() and circle_color:GetColor() or Color(0, 255, 255, 255) -- Cyan
-    local onHeadCircleColor = on_head_color:GetBool() and on_head_color:GetColor() or Color(255, 255, 0, 255) -- Yellow
+    local baseCircleColor = visual_settings.circle_color
+    local onHeadCircleColor = visual_settings.on_head_color
     
     local localPlayerPawnForDraw = GetLocalPlayerPawn()
     if not localPlayerPawnForDraw or not localPlayerPawnForDraw.m_pGameSceneNode then return end
@@ -1136,7 +1169,6 @@ local function DrawPlayerIndicators()
     local isPlayerOnHeadForDraw = (localPlayerPosForDraw.z - currentTargetPosForDraw.z) > ON_HEAD_Z_THRESHOLD and 
                                   CheckSameXY(localPlayerPosForDraw, currentTargetPosForDraw, ON_HEAD_XY_TOLERANCE)
 
-    -- Draw main circle around target
     if IsOnScreen(screenPosTargetFeet) then
         if isPlayerOnHeadForDraw then
             Renderer.DrawCircleGradient3D(interpolatedPos, onHeadCircleColor, Color(onHeadCircleColor.r, onHeadCircleColor.g, onHeadCircleColor.b, 100), 25)
@@ -1167,8 +1199,21 @@ local function MasterRenderLoop()
         if not gui_initialized then
             SetupESPMenu()
         end
+
+        local currentTime = Globals.GetCurrentTime()
+        if (currentTime - last_player_list_update) > 1.0 then -- Perbarui setiap 1 detik
+
+            local enemy_names, teammate_names = GetAllPlayersSortedByTeam()
+
+            UpdateListPageContent(enemy_names, enemy_gui_elements, enemy_page_state)
+            UpdateListPageContent(teammate_names, teammate_gui_elements, teammate_page_state)
+
+            last_player_list_update = currentTime
+        end
+
         GUI.Render()
     end
+
     DrawESPForTargets()
     DrawPlayerIndicators()
     DrawGriefFOV() 
